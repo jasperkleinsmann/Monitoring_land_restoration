@@ -1,0 +1,272 @@
+---
+title: "A9-analyse_large_plot"
+format: html
+editor: visual
+---
+
+
+```{r}
+#install.packages('dismo')
+
+library(mapview)
+library(osmdata)
+library(dismo)
+library(dplyr)
+library(sf)
+library(data.table)
+library(tsibble)
+library(lubridate)
+library(fable)
+library(fabletools)
+library(feasts)
+library(zoo)
+library(tidyverse)
+```
+
+```{r}
+plots_large_id <- c('E4740','E5215','G16374','G33032')
+```
+
+Select and split ploygon into multiple smaller ones
+```{r}
+split_poly <- function(sf_poly, n_areas){
+  # create random points
+  points_rnd <- st_sample(sf_poly, size = 10000)
+  #k-means clustering
+  points <- do.call(rbind, st_geometry(points_rnd)) %>%
+    as_tibble() %>% setNames(c("lon","lat"))
+  k_means <- kmeans(points, centers = n_areas)
+  # create voronoi polygons
+  voronoi_polys <- dismo::voronoi(k_means$centers, ext = sf_poly)
+  # clip to sf_poly
+  crs(voronoi_polys) <- crs(sf_poly)
+  voronoi_sf <- st_as_sf(voronoi_polys)
+  equal_areas <- st_intersection(voronoi_sf, sf_poly)
+  equal_areas$area <- st_area(equal_areas)
+  return(equal_areas)
+}
+
+plots <- st_read(dsn='output/plot_data/all_countries/Countries_plots_green2.GeoJSON')
+plots_largest <- plots[plots$plotID %in% plots_large_id, c('plotID','plot_ID', 'Hectare')]
+
+pol <- osmdata::getbb("aguascalientes", format_out = "sf_polygon") 
+# Divide large polygons in 100 smaller ones and assign area ID
+pol_areas <- split_poly(plots_largest[1,], 100)
+pol_areas$areaID <- paste0(plots_largest[1,]$plotID, '_', seq(1,nrow(pol_areas)))
+for (i in 2:4){
+  pol_area <- split_poly(plots_largest[i,], 100)
+  # Assign area ID 
+  pol_area$areaID <- paste0(plots_largest[i,]$plotID, '_', seq(1,nrow(pol_area)))
+  # Bind to df
+  pol_areas <- rbind(pol_areas, pol_area)
+  
+  rm(pol_area)
+}
+mapview(pol_areas)
+
+# Compute area of new sub areas
+pol_areas$Hectare <- st_area(pol_areas)/10000
+
+# Covert multipolygons to polygons and exclude polygons smaller than 0.5ha
+pol_areas <- st_cast(pol_areas, to = 'POLYGON')
+pol_areas <- pol_areas[as.numeric(pol_areas$Hectare) > 0.5,]
+
+write_sf(pol_areas, 'output/plot_data/other/plots_subareas.GeoJSON', driver='GeoJSON')
+plot_areas <- st_read('output/plot_data/other/plots_subareas.GeoJSON')
+```
+
+
+```{r}
+# GEE per area
+refl_l8 <- fread(paste0('output/gee/plots_subareas_refl_l8.csv'), select =c('date', 'SR_B4', 'SR_B5','QA_PIXEL','plotID','areaID'))  
+# GPM
+gpm_raw <- fread('output/time_series/gpm/Countries_gpm_monthly.csv')
+gpm_raw <- gpm_raw %>% 
+  filter(plotID %in% plots_large_id) %>% 
+  mutate(yearmon = as.Date(ISOdate(year(date), month(date), 15)))
+
+# Create gpm df with lagged variables
+gpm_lag <- gpm_raw %>%  
+  arrange(plotID, yearmon) %>% 
+  mutate(prcp_lag1=data.table::shift(prcp_month, n=1, type='lag'),
+         prcp_lag2=data.table::shift(prcp_month, n=2, type='lag'))
+
+# Create emtpy df to fill
+gpm <- gpm_lag[0,]
+gpm$areaID <- NA
+for (plot in unique(refl_l8$plotID)){
+  
+  for (area in unique(refl_l8[refl_l8$plotID==plot,]$areaID)){
+    
+    print(area)
+    gpm_temp <- gpm_lag[gpm_lag$plotID==plot,]
+    gpm_temp$areaID <- area
+    
+    gpm <- rbind(gpm, gpm_temp)
+}}
+
+
+refl_l8 <- refl_l8[!is.na(refl_l8$SR_B4) | !is.na(refl_l8$SR_B5),]
+refl_l8$date <- as.Date(refl_l8$date, tryFormats = "%d/%m/%Y")
+
+# Cloud mask
+cloud_landsat <- function(x){
+  bits <- as.numeric(intToBits(x))[1:16]
+  if(bits[7] == 1 && bits[5] == 0 && bits[3] == 0){
+    return(0)
+  }
+  else(return(1))
+}
+
+# Scale DN values to reflectance values
+scale_fac <- 0.0000275
+offset <- -0.2
+refl_l8[,c('SR_B4', 'SR_B5')] <- (refl_l8[,c('SR_B4', 'SR_B5')] * scale_fac) + offset
+
+refl_l8 <- refl_l8[refl_l8$SR_B4 >= 0,]
+refl_l8 <- refl_l8[refl_l8$SR_B5 >= 0,]
+
+refl_l8$clouds <- 0
+refl_l8$clouds <- lapply(refl_l8$QA_PIXEL, cloud_landsat) # Apply function to all pixels 
+refl_l8 <- refl_l8[refl_l8$clouds==0,] # Filter out pixels with clouds
+
+refl_l8$ndvi <- (refl_l8$SR_B5 - refl_l8$SR_B4) / (refl_l8$SR_B5 + refl_l8$SR_B4)
+
+# Take monthly average for each area
+ts_plot <- refl_l8 %>% 
+  mutate(yearmon = as.Date(ISOdate(year(date), month(date), 15))) %>% 
+  group_by(areaID, yearmon) %>% 
+  summarise(ndvi=mean(ndvi,na.rm=T),
+            yearmon=first(yearmon),
+            plotID=first(plotID))
+         
+# Merge reflectance and gpm data
+ts_plot <- merge(ts_plot[,!names(ts_plot) %in% 'plotID'], gpm[,c('plotID','prcp_month','prcp_lag1','prcp_lag2','yearmon','areaID')], by=c('areaID','yearmon'), all.y = T)
+
+# Creates tsibble and interpolate the missing ndvi values
+ts_plot <- ts_plot %>% 
+  group_by(areaID) %>% 
+  arrange(areaID, yearmon) %>% 
+  # Check if plot ts is all NAs and exclude
+  mutate(entire_na = length(which(!is.na(ndvi))) == 118) %>% 
+  filter(!entire_na) %>% 
+  # Exclude NAs when at beginning or end of time series
+  slice(min(which(!is.na(ndvi))):max(which(!is.na(ndvi)))) %>% 
+  # Remove the entire.na column
+  select(!entire_na) %>% 
+  # Interpolate NDVI values
+  mutate(yearmonth = yearmonth(yearmon),
+         ndvi_int = na.approx(ndvi)) %>% 
+  # Convert to tsibble
+  as_tsibble(key=areaID, index=yearmonth)
+
+# Split in training and predicting
+ref_plot <- ts_plot %>% filter(year(yearmonth) < 2017)
+prd_plot <- ts_plot %>% filter(year(yearmonth) >= 2017)
+
+# Train ARIMA models
+armax_plot <- ref_plot %>% 
+  model(ARIMA(ndvi_int ~ prcp_month + prcp_lag1 + prcp_lag2 + pdq(d=0) + PDQ(D=0), stepwise = T, ic='aicc'))
+
+
+# Forecast ndvi based on models and precipitation
+fc_plot <- fabletools::forecast(armax_plot, new_data = prd_plot[,c('yearmonth', 'prcp_month', 'prcp_lag1', 'prcp_lag2', 'areaID')])
+
+# Extract 95% confidence levels
+plot_ci <- fc_plot$ndvi_int %>% 
+  hilo(80) 
+fc_plot <- fc_plot %>% 
+  mutate(upper = plot_ci$upper,
+         lower = plot_ci$lower)
+
+# save
+save(armax_plot, file = 'output/models/l8_armax_areas.RDS')
+save(fc_plot, file = 'output/models/l8_fc_areas.RDS')
+load(file = 'output/models/l8_armax_areas.RDS')
+```
+
+```{r}
+# Select relevant rows and add yearmon column
+fc_plot_dt <- data.table(fc_plot[,c('.mean', 'yearmonth', 'areaID', 'upper', 'lower')])
+names(fc_plot_dt)[names(fc_plot_dt) == '.mean'] <- 'pred_test'
+fc_plot_dt$yearmon <- as.Date(ISOdate(year(fc_plot_dt$yearmonth), month(fc_plot_dt$yearmonth), 15))
+
+# Merge actual ndvi with the predicted ndvi
+fc_ts <- merge(ts_plot, fc_plot_dt[,-c('yearmonth')], by=c('yearmon', 'areaID'), all.x=T)
+fc_ts$yearmonth <- yearmonth(fc_ts$yearmon)
+
+# Merge actual ndvi with predicted reference ndvi
+fc_ts <- merge(fc_ts, residuals(armax_plot)[c('areaID', 'yearmonth', '.resid')], 
+                   by=c('yearmonth', 'areaID'), all.x=T)
+
+# Compute training prediction
+fc_ts$pred_train <- fc_ts$ndvi_int + fc_ts$.resid
+
+# Combine test and training prediction into one and convert to tsibble
+fc_ts <- fc_ts %>% 
+  tsibble(key=areaID, index=yearmonth) %>% 
+  mutate(ndvi_pred = if_else(is.na(pred_test), pred_train, pred_test))
+```
+
+Compute restoration level
+```{r}
+mae <- fc_ts %>% 
+  mutate(test_res_0 = if_else(ndvi_int > upper, ndvi_int - upper, 0),
+         pred_resid = pred_test - ndvi_int,
+         training = if_else(!is.na(pred_train), 1, 0)) %>% 
+  tibble() %>% 
+  group_by(areaID) %>% 
+  summarise(plotID = first(plotID),
+            n = n(),
+            n_training = sum(training),
+            mae = sum(test_res_0, na.rm=T) / (n - n_training) * 100) 
+
+plot_areas <- merge(plot_areas, mae[,c('areaID', 'mae')], by='areaID')
+```
+
+Visualise
+```{r}
+mapview(plot_areas, zcol='mae')
+mapview(plot_areas[plot_areas$plotID==plots_large_id[4], 'mae'], zcol='mae', legend=T)
+
+st_write(plot_areas, dsn='output/plot_data/other/plots_areas_green.geojson', driver='GeoJSON')
+
+plots_dt[plots_dt$plotID==plots_large_id[4],]$mae
+plt_stat_fit %>% filter(plotID==plots_large_id[1])
+
+plt <- 
+fc_plot %>% 
+  filter(areaID==plt) %>% 
+  mutate(ci_95 = hilo(ndvi_int,95),
+         upper_95=ci_95$upper,
+         lower_95=ci_95$lower,
+         ci_80 = hilo(ndvi_int, 80),
+         upper_80=ci_80$upper,
+         lower_80=ci_80$lower,
+         ci_50 = hilo(ndvi_int, 50),
+         upper_50=ci_50$upper,
+         lower_50=ci_50$lower) %>% 
+  ggplot()+
+  #geom_point(data = ts_plot[ts_plot$areaID==plt,], aes(x = date, y = ndvi), alpha=0.2,size=2)+
+  #geom_vline(xintercept = plots[plots$plotID==plt,]$plant_date, lty=3, alpha=1)+
+  #geom_ribbon(aes(x=as.Date(yearmonth), ymin=lower_95, ymax=upper_95), alpha=0.1, fill='orange')+
+  geom_ribbon(aes(x=as.Date(yearmonth), ymin=lower_80, ymax=upper_80), alpha=0.2, fill='orange')+
+  geom_ribbon(aes(x=as.Date(yearmonth), ymin=lower_50, ymax=upper_50), alpha=0.3, fill='orange')+
+  geom_line(data = fc_ts[fc_ts$areaID==plt,], aes(x=as.Date(yearmonth), y=ndvi_pred),
+            col='darkblue',lwd=0.9,lty=2)+
+  geom_line(data = fc_ts[fc_ts$areaID==plt,], aes(x = as.Date(yearmonth), y = ndvi_int),lwd=1,
+            col='black')+
+  #geom_line(data=l8_fc_plt_dt[l8_fc_plt_dt$plotID==plt,], 
+  #          aes(x=as.Date(yearmonth), y=normalize(prcp, method='range',c(0,0.3))), col='blue')+
+  annotate('text', x=as.Date('2021-12-01'),y=0.9, 
+           label=paste('MAEp =',round(mae[mae$areaID==plt,]$mae,3)),
+           size=3.5)+
+  labs(y='NDVI')+
+  theme(axis.title.x = element_blank(),
+        panel.spacing = unit(0, "lines"),
+        panel.background = element_rect(fill='white', colour='grey'),
+        panel.grid.major = element_line(color='grey',linewidth = 0.1),
+        axis.text = element_text(size=12),
+        axis.title = element_text(size=14))+
+  ylim(0,1)
+```

@@ -1,0 +1,130 @@
+---
+title: "A7-ts_interpret"
+author: "Jasper"
+format: html
+editor: visual
+---
+
+```{r}
+library(terra)
+library(sf)
+library(lubridate)
+library(data.table)
+library(tsibble)
+library(zoo)
+library(tidyverse)
+library(scales)
+library(ggplot2)
+```
+
+Import data
+
+```{r}
+load('output/models/Countries_l8_armax_plt2.RDS')
+load('output/models/Countries_l8_fc_plt2.RDS')
+l8_ts_plt <- read_csv('output/time_series/Countries_l8_plt.csv')
+
+# Cleaned plts ts with the fc and the entire ndvi monthly ts
+l8_fc_plt_dt <- read_csv('output/time_series/Countries_ts_fc_plt2.csv')
+
+# Import raw ts
+l8_ts <- read_csv('output/time_series/Countries_l8_ts.csv')
+l8_ts <- l8_ts[l8_ts$yearmon > as.Date('2013-01-01') & l8_ts$yearmon < as.Date('2022-11-01'),] # start L8
+plots <- st_read(dsn='output/plot_data/all_countries/Countries_plots_green2.GeoJSON')
+```
+
+
+# Pre-process the acutal and modelled ndvi
+Select columns and merge actual and forecasted ndvi
+
+```{r}
+# Only selected the columns of interest
+l8_fc_plt_dt <- l8_fc_plt[,c('.mean', 'yearmonth', 'plotID', 'upper', 'lower')]
+names(l8_fc_plt_dt)[names(l8_fc_plt_dt) == '.mean'] <- 'pred_test'
+l8_fc_plt_dt$yearmon <- as.Date(ISOdate(year(l8_fc_plt_dt$yearmonth), month(l8_fc_plt_dt$yearmonth), 15))
+# Merge actual ndvi with the forecasted ndvi
+l8_fc_plt_dt <- merge(l8_fc_plt_dt, l8_ts_plt[,c('ndvi_int', 'ndvi', 'prcp', 'plotID', 'yearmon', 'country', 'county')], by=c('yearmon', 'plotID'), all.y=T)
+```
+
+Exclude plots with >60 NA months in total & with >22 NA in training period
+```{r}
+# Exclude plots with more than 22 NA in training period or more than 60 NAs in total
+l8_fc_plt_dt <- l8_fc_plt_dt %>% 
+  group_by(plotID) %>% 
+  mutate(na_training = if_else(yearmon < as.Date('2017-01-01') & is.na(ndvi), 1, 0),
+         na_tr_sum = sum(na_training, na.rm=T),
+         na = if_else(is.na(ndvi), 1, 0),
+         na_sum = sum(na, na.rm=T)) %>% 
+  select(!c('na','na_training')) %>% 
+  filter(na_sum < 61,
+         na_tr_sum < 23)
+```
+
+Merge actual and training prediction
+```{r}
+# Fill the NAs in yearmonth
+l8_fc_plt_dt <- l8_fc_plt_dt %>% 
+  mutate(yearmonth = if_else(is.na(yearmonth), yearmonth(yearmon), yearmonth))
+
+# Merge actual ndvi with predicted reference ndvi
+l8_fc_plt_dt <- merge(l8_fc_plt_dt, residuals(l8_armax_plt)[c('plotID', 'yearmonth', '.resid')], by=c('yearmonth', 'plotID'), all.x=T)
+
+# Compute training prediction
+l8_fc_plt_dt$pred_train <- l8_fc_plt_dt$ndvi_int + l8_fc_plt_dt$.resid
+
+# Combine test and training prediction into one and convert to tsibble
+l8_fc_plt_dt <- l8_fc_plt_dt %>% 
+  tsibble(key=plotID, index=yearmonth) %>% 
+  mutate(ndvi_pred = if_else(is.na(pred_test), pred_train, pred_test))
+
+write_csv(l8_fc_plt_dt, 'output/time_series/Countries_ts_fc_plt2.csv')
+l8_fc_plt_dt <- read_csv('output/time_series/Countries_ts_fc_plt2.csv')
+
+l8_fc_plt_dt <- l8_fc_plt_dt %>% 
+  mutate(yearmonth = yearmonth(yearmon))
+```
+
+
+# Identify months with significantly higher ndvi -- new method
+```{r}
+plt_stat_fit <- l8_fc_plt_dt %>% 
+  # Exclude the residuals lower than 80% CI
+  mutate(test_res = if_else(ndvi_int > upper, ndvi_int - upper, 0),
+         pred_resid = pred_test - ndvi_int,
+         training = if_else(!is.na(pred_train), 1, 0)) %>% 
+  tibble() %>% 
+  group_by(plotID) %>% 
+  summarise(plotID = first(plotID),
+            # Take the mean and sd of  the reference ndvi
+            ndvi_mean=mean(ndvi_int[is.na(pred_test)]),
+            ndvi_sd=sd(ndvi_int[is.na(pred_test)]),
+            # Compute the MAE and RMSE
+            n_training = sum(training),
+            n = n(),
+            mae = sum(test_res, na.rm=T) / (n - n_training) * 100,
+            maep = sum((test_res/ndvi_int)*100, na.rm=T) / (n - n_training),
+            rmse_test = sum(sqrt(pred_resid^2), na.rm=T) / (n - n_training),
+            rmse_train = sum(sqrt(.resid^2), na.rm=T) / n_training) %>% 
+  left_join(plots[,c('plotID', 'country', 'county','region', 'Hectare', 'type')], by='plotID')
+
+write_csv(plot_cntr_summary, 'output/other/plot_cntr_summary.csv')
+
+# Add mae to plots and save
+plots <- plots %>% 
+  right_join(plt_stat_fit[,c('plotID', 'mae')], by = 'plotID') 
+st_write(obj=plots, dsn='output/plot_data/all_countries/Countries_plots_green2.GeoJSON', driver='GeoJSON')
+```
+
+
+# Compute some descriptive statistics
+```{r}
+plt_stat_fit %>% 
+  group_by(country, type) %>% 
+  summarise(n = n(),
+            mean_size = mean(Hectare, na.rm=T),
+            median_size = median(Hectare, na.rm=T),
+            sd = sd(Hectare, na.rm=T),
+            sum_size = sum(Hectare, na.rm=T),
+            mae_med = median(mae, na.rm=T),
+            mae_avg = mean(mae, na.rm=T))
+```
