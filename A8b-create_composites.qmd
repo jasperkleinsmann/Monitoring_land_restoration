@@ -1,11 +1,13 @@
 ---
-title: "A8b-Validation_create_S2_composites"
+title: "A8b-Validation_create_composites"
 author: "Jasper"
 format: html
 editor: visual
 ---
 
-Packages Load
+Script to create annual median composites of Landsat 8 data for validation of the model
+
+```{python}
 
 ```{python}
 import ee

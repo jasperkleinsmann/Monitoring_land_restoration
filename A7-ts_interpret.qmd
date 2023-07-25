@@ -5,6 +5,8 @@ format: html
 editor: visual
 ---
 
+Script to perform the greening analysis. It merges the actual NDVI and predicted SARMAX NDVI and compares the two time series by computing the MAEp.
+
 ```{r}
 library(terra)
 library(sf)
@@ -17,20 +19,19 @@ library(scales)
 library(ggplot2)
 ```
 
-Import data
+# Import data
 
 ```{r}
+# SARMAX models and prediction
 load('output/models/Countries_l8_armax_plt2.RDS')
 load('output/models/Countries_l8_fc_plt2.RDS')
-l8_ts_plt <- read_csv('output/time_series/Countries_l8_plt.csv')
 
-# Cleaned plts ts with the fc and the entire ndvi monthly ts
-l8_fc_plt_dt <- read_csv('output/time_series/Countries_ts_fc_plt2.csv')
+# Plot time series
+l8_ts_plt <- read_csv('output/time_series/Countries_l8_plt.csv')
 
 # Import raw ts
 l8_ts <- read_csv('output/time_series/Countries_l8_ts.csv')
 l8_ts <- l8_ts[l8_ts$yearmon > as.Date('2013-01-01') & l8_ts$yearmon < as.Date('2022-11-01'),] # start L8
-plots <- st_read(dsn='output/plot_data/all_countries/Countries_plots_green2.GeoJSON')
 ```
 
 
@@ -46,7 +47,7 @@ l8_fc_plt_dt$yearmon <- as.Date(ISOdate(year(l8_fc_plt_dt$yearmonth), month(l8_f
 l8_fc_plt_dt <- merge(l8_fc_plt_dt, l8_ts_plt[,c('ndvi_int', 'ndvi', 'prcp', 'plotID', 'yearmon', 'country', 'county')], by=c('yearmon', 'plotID'), all.y=T)
 ```
 
-Exclude plots with >60 NA months in total & with >22 NA in training period
+# Exclude plots with >60 NA months in total & with >22 NA in training period
 ```{r}
 # Exclude plots with more than 22 NA in training period or more than 60 NAs in total
 l8_fc_plt_dt <- l8_fc_plt_dt %>% 
@@ -60,7 +61,7 @@ l8_fc_plt_dt <- l8_fc_plt_dt %>%
          na_tr_sum < 23)
 ```
 
-Merge actual and training prediction
+# Merge actual and training prediction
 ```{r}
 # Fill the NAs in yearmonth
 l8_fc_plt_dt <- l8_fc_plt_dt %>% 
@@ -77,9 +78,11 @@ l8_fc_plt_dt <- l8_fc_plt_dt %>%
   tsibble(key=plotID, index=yearmonth) %>% 
   mutate(ndvi_pred = if_else(is.na(pred_test), pred_train, pred_test))
 
+# Cleaned plt ts ts with the fc and the entire ndvi monthly ts
 write_csv(l8_fc_plt_dt, 'output/time_series/Countries_ts_fc_plt2.csv')
 l8_fc_plt_dt <- read_csv('output/time_series/Countries_ts_fc_plt2.csv')
 
+# When import l8_fc_plt_dt --> convert yearmon to yearmonth date
 l8_fc_plt_dt <- l8_fc_plt_dt %>% 
   mutate(yearmonth = yearmonth(yearmon))
 ```
@@ -107,12 +110,18 @@ plt_stat_fit <- l8_fc_plt_dt %>%
             rmse_train = sum(sqrt(.resid^2), na.rm=T) / n_training) %>% 
   left_join(plots[,c('plotID', 'country', 'county','region', 'Hectare', 'type')], by='plotID')
 
-write_csv(plot_cntr_summary, 'output/other/plot_cntr_summary.csv')
+write_csv(plt_stat_fit, 'output/plot_data/all_countries/plt_stat_fit.csv')
+plt_stat_fit <- read_csv('output/plot_data/all_countries/plt_stat_fit.csv')
 
 # Add mae to plots and save
+plots <- read_csv('output/plot_data/all_countries/Countries_plots_final.csv')
 plots <- plots %>% 
-  right_join(plt_stat_fit[,c('plotID', 'mae')], by = 'plotID') 
+  right_join(plt_stat_fit[,c('plotID', 'mae')], by = 'plotID') # Merge
+
+# Write results
 st_write(obj=plots, dsn='output/plot_data/all_countries/Countries_plots_green2.GeoJSON', driver='GeoJSON')
+# or
+write_csv(obj=plots, dsn='output/plot_data/all_countries/Countries_plots_green2.csv')
 ```
 
 

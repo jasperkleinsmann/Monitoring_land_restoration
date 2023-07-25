@@ -25,7 +25,7 @@ library(BBmisc)
 countries <- list('Ethiopia','Ghana','Kenya','Mali','Niger','Rwanda','Senegal')
 ```
 
-## Create cloud function
+# Create cloud function
 
 ```{r}
 # Function for cloud filtering
@@ -38,7 +38,7 @@ cloud_landsat <- function(x){
 }
 ```
 
-## Import satellite data and merge into single df
+# Import satellite data and merge into single df
 
 ```{r}
 # Create empty df
@@ -84,7 +84,7 @@ for (i in countries){
 }
 ```
 
-## Create plot unique IDs across countries
+# Create plot unique IDs across countries
 
 ```{r}
 # Create new column that unique compared to all countries
@@ -98,7 +98,7 @@ for (i in 1:length(countries)){
 ```
 
 
-## Write aggregated reflectance dataset
+# Write aggregated reflectance dataset
 
 ```{r}
 # Write VI dt

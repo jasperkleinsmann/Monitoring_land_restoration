@@ -5,6 +5,8 @@ format: html
 editor: visual
 ---
 
+Script to make the figures 
+
 Packages
 
 ```{r}
@@ -46,6 +48,8 @@ load('output/models/Countries_l8_fc_plt2.RDS')
 
 # Import the plots data in include the plant date in the graph
 plots <- st_read(dsn='output/plot_data/all_countries/Countries_plots_green2.GeoJSON')
+# or when GeoJSON not available
+plots <- read_csv('output/plot_data/all_countries/Countries_plots_green2.csv')
 plots_dt <- tibble(plots)
 admins <- st_read('output/plot_data/all_countries/Countries_admins.GeoJSON')
 
@@ -107,7 +111,6 @@ l8_fc_plt %>%
         axis.title = element_text(size=14))+
   ylim(0,1)
 dev.off()
-
 ```
 
 Plot vegetation for one county including precipitation

@@ -3,6 +3,8 @@ title: "A5-combine_country_data"
 format: html
 ---
 
+Script 1) assign adminstrative boundry information (country, district, regio) to the plots based on adminstrative geometries and 2) to combine the satellite time series from all countries into one dataframe.
+
 # Import
 ```{r}
 # Assign county, regio and country to each plots file

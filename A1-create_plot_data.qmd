@@ -3,6 +3,8 @@ title: "Untitled"
 format: html
 ---
 
+Script to (geometrically) clean and combine the restoration plot data
+
 ```{r}
 library(data.table)
 library(tidyverse)
@@ -92,7 +94,7 @@ plots.spat <- st_make_valid(plots.spat)
 ```
 
 
-#### Exclude and merge overlapping geometries
+# Exclude and merge overlapping geometries
 ```{r}
 # Set buffer of 0m to remove intersection issues
 sf::sf_use_s2(FALSE)
@@ -218,7 +220,7 @@ for (pl in 1:nrow(plots.buf)){
 ```
 
 
-Assign date to cohort and farmer data
+# Assign date to cohort and farmer data
 ```{r}
 # TO COHORT DATA
 months <- c('Jan'=1, 'Feb'=2, 'Mar'=3, 'Apr'=4,'May'=5,'Jun'=6,'Jul'=7,'Aug'=8,'Sep'=9,

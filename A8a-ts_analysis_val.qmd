@@ -5,6 +5,8 @@ format: html
 editor: visual
 ---
 
+Script that performs the entire time series analysis (A2, A3, A4, A5, A6, A7) for the validation points. 
+
 ```{r}
 library(tidyverse)
 library(sf)
@@ -26,7 +28,7 @@ library(plotly)
 library(viridis)
 ```
 
-## Import and pre-process validation data
+# Import and pre-process validation data
 
 ```{r}
 # Add column validation data
@@ -40,12 +42,11 @@ st_write(obj=val_pnts, dsn='data/validation_points.GeoJSON', driver='GeoJSON')
 st_write(obj=val_pnts, dsn='data/validation_points.csv', driver='CSV')
 ```
 
-## Extract satellite information
-
+# Extract satellite information
 Extract the landsat 8 and GPM satellite information using the GEE extract script (A2)
 
-## Create reflectance dataframe for validation points
 
+# Create reflectance dataframe for validation points
 Function for cloud filtering
 
 ```{r}
@@ -90,8 +91,8 @@ refl_aggr_val <- refl_val[,.(ndvi=mean(ndvi,na.rm=T)), by=list(plotID, date)]
 refl_aggr_val$yearmon <- as.Date(ISOdate(year(refl_aggr_val$date), month(refl_aggr_val$date), 15))
 ```
 
-## Extract the GPM at validation points
 
+# Extract the GPM at validation points
 Import
 
 ```{r}
@@ -136,8 +137,8 @@ gpm_ts$yearmon <- as.Date(ISOdate(year(gpm_ts$date), month(gpm_ts$date), 15))
 val_pnts <- st_as_sf(val_pnts)
 ```
 
-## Add precipitation to reflectance ts
 
+# Add precipitation to reflectance ts
 ```{r}
 # Convert val_pnts to datatable 
 val_pnts_dt <- data.table(val_pnts)
@@ -151,14 +152,14 @@ fwrite(val_ts, 'output/time_series/Val_l8_ts.csv')
 val_ts <- fread('output/time_series/Val_l8_ts.csv')
 ```
 
-## Vegetation modeling
 
+# Vegetation modeling
 Cut off dates outside period of interest
-
 ```{r}
 # Filter out time stamps before the observation
 val_ts <- val_ts[val_ts$yearmon > as.Date('2013-01-01') & val_ts$yearmon < as.Date('2022-11-01')]
 ```
+
 
 Create tsibble for analysis
 
@@ -198,6 +199,7 @@ val_ref_pnt <- val_ts_pnt %>% filter(year(yearmonth) < 2017)
 val_prd_pnt <- val_ts_pnt %>% filter(year(yearmonth) >= 2017)
 ```
 
+
 Train ARIMA models and predict
 
 ```{r}
@@ -222,30 +224,9 @@ load(file = 'output/models/Val_l8_fc_pnt2.RDS')
 load(file = 'output/models/Val_l8_armax_pnt2.RDS')
 ```
 
-######################################
-Train for single site
-```{r}
-plt <- 177
-# Train ARIMA models
-val_armax_pnt <- val_ref_pnt %>% 
-  filter(plotID==plt) %>% 
-  model(ARIMA(ndvi_int ~ prcp + prcp_lag1 + prcp_lag2, stepwise = T, ic='aicc'))
-
-# Forecast ndvi based on models and precipitation
-val_fc_pnt <- fabletools::forecast(val_armax_pnt, new_data = val_prd_pnt[,c('yearmonth', 'prcp', 'prcp_lag1', 'prcp_lag2', 'plotID')])
-
- # Extract 95% confidence levels
-val_pnt_ci <- val_fc_pnt$ndvi_int %>% 
-  hilo(80) 
-val_fc_pnt <- val_fc_pnt %>% 
-  mutate(upper = val_pnt_ci$upper,
-         lower = val_pnt_ci$lower)
-```
-##################################
 
 
-## Interpret vegetation modeling
-
+# Interpret vegetation modeling
 Prepare data
 
 ```{r}
@@ -299,88 +280,14 @@ val_mae <- val_fc_ts %>%
             rmse_test = sum(sqrt(pred_resid^2), na.rm=T) / (n - n_training),
             rmse_train = sum(sqrt(.resid^2), na.rm=T) / n_training) %>% 
   right_join(val_pnts[,c('plotID', 'country')], by='plotID')
-
-ggplot(val_mae) +
-  geom_point(aes(x=country, y=mae_0, col=regreened), alpha=0.25, position='jitter')+
-  geom_hline(aes(yintercept=0.002), alpha=0.5, lty=2)+
-  geom_boxplot(aes(x=country, y=mae_0, col=regreened), outlier.alpha = 0)
-  
-plot_ly(data = val_mae, x = ~plotID, y = ~mae_0, color = ~regreened)
 ```
 
-Visualise site time series with confidence interval
+
+Test accuracy of proposed method
 
 ```{r}
-# Change y time to English language
-sessionInfo()
-Sys.setlocale('LC_TIME','en_US.UTF-8')
-
-plt = 177
-# 177 --> multiplicative prediction interval
-# 20 --> downward trend due to seasonal differencing
-val_armax_pnt[val_armax_pnt$plotID==plt,]
-val_ts[val_ts$plotID==plt,]
-
-plot(decompose(ts(val_ref_pnt[val_ref_pnt$plotID==plt,]$ndvi_int, frequency = 12,
-     start=c(2014,4), end = c(2017,1)), type = 'additive'))
-
-pdf(paste0('figures/ts_d1_',plt,'.pdf'), height = 4, width=7)
-val_fc_pnt %>% 
-  filter(plotID==plt) %>% 
-  mutate(ci_95 = hilo(ndvi_int,95),
-         upper_95=ci_95$upper,
-         lower_95=ci_95$lower,
-         ci_80 = hilo(ndvi_int, 80),
-         upper_80=ci_80$upper,
-         lower_80=ci_80$lower,
-         ci_50 = hilo(ndvi_int, 50),
-         upper_50=ci_50$upper,
-         lower_50=ci_50$lower) %>% 
-  ggplot()+
-  geom_point(data = val_ts[val_ts$plotID==plt,], aes(x = date, y = ndvi), alpha=0.2)+
-  #geom_ribbon(aes(x=yearmonth, ymin=lower_95, ymax=upper_95), alpha=0.1, fill='blue')+
-  geom_ribbon(aes(x=as.Date(yearmonth), ymin=lower_80, ymax=upper_80), alpha=0.2, fill='orange')+
-  geom_ribbon(aes(x=as.Date(yearmonth), ymin=lower_50, ymax=upper_50), alpha=0.3, fill='orange')+
-  geom_line(data = val_fc_ts[val_fc_ts$plotID==plt,], aes(x = as.Date(yearmonth), y = ndvi_pred),
-            col='brown',lwd=0.9,lty=2)+
-  geom_line(data=val_fc_ts[val_fc_ts$plotID==plt,], aes(x=as.Date(yearmonth), y=ndvi_int), col='black',lwd=0.7)+
-  annotate('text', x=as.Date('2021-02-01'),y=0.9, 
-           label=paste('MAEp =',round(val_mae[val_mae$plotID==plt,]$mae_0,3)),
-           size=3.5)+
-  labs(y='NDVI')+
-  theme(axis.title.x = element_blank(),
-        panel.spacing = unit(0, "lines"),
-        panel.background = element_rect(fill='white', colour='grey'),
-        panel.grid.major = element_line(color='grey', linewidth = 0.1),
-        axis.text = element_text(size=12),
-        axis.title = element_text(size=14))+
-  ylim(0,1)
-dev.off()
-
-pdf(paste0('figures/ndvi_validation.pdf'), height = 4, width=8)
-val_fc_ts %>% 
-  mutate(regreened = if_else(regreened == 'yes', 'Yes', 'No')) %>% 
-  right_join(val_pnts[,c('plotID', 'country')], by='plotID') %>%
-  group_by(regreened, country) %>% 
-  summarise(ndvi = mean(ndvi_int, na.rm=T)) %>% 
-  ggplot()+
-  geom_line(aes(x=yearmonth, y=ndvi, col = country, lty=regreened), lwd=0.8)+
-  labs(y='NDVI', col = 'Country', lty = 'Regreened')+
-  theme(axis.title.x = element_blank(),
-        panel.spacing = unit(0, "lines"),
-        panel.background = element_rect(fill='white', colour='grey'),
-        panel.grid.major = element_line(color='grey', linewidth = 0.1),
-        axis.text = element_text(size=12),
-        axis.title = element_text(size=14))+
-  scale_color_viridis(discrete=T, option='C')+
-  ylim(0,1)
-dev.off()
-```
-
-Test accuracies of various MAE thresholds
-
-```{r}
-interval <- seq(0.01,0.015, by=0.001)
+# Test accuracies of various MAE thresholds
+interval <- seq(1, 1.5, by = 0.1)
 
 for (i in interval){
   binary <- val_mae %>% 
@@ -392,10 +299,10 @@ for (i in interval){
   print(cm)
 }
 
-# Best classifcation
+# Best classification MAEp threshold = 1.4
 binary <- val_mae %>% 
   #filter(country=='Rwanda') %>% 
-  mutate(bin_class = if_else(mae_0 <= 0.014, 'no', 'yes'))
+  mutate(bin_class = if_else(mae_0 <= 1.4, 'no', 'yes'))
 
   
 cm <- confusionMatrix(factor(binary$bin_class), 
@@ -404,68 +311,4 @@ cm <- confusionMatrix(factor(binary$bin_class),
 
 write.csv(as.matrix(cm,what='classes'), 'figures/acc_validation.csv')
 write.csv(as.matrix(cm), 'figures/cm_validation.csv')
-```
-
-# Running random forest on validation data for prediction (not needed)
-
-```{r}
-# Add regreening validation to validation time series
-val_ts_pred <- val_ts_pnt %>% 
-  right_join(val_pnts[,c('plotID', 'regreened')], by='plotID') %>% 
-  # For caret randomforest, regreened variable cannot start with a number
-  mutate(regreened = if_else(regreened == 1, 'yes', 'no'))
-
-# To create year time series
-val_ts_pred <- val_ts_pnt %>%  
-  group_by(year(yearmon), plotID) %>% 
-  rename(year = `year(yearmon)`) %>% 
-  summarise(ndvi_yr = mean(ndvi, na.rm=T),
-            prcp_yr = sum(prcp)) %>% 
-  right_join(val_pnts[,c('plotID', 'regreened')], by='plotID') %>% 
-  # For caret randomforest, regreened variable cannot start with a number
-  mutate(regreened = if_else(regreened == 1, 'yes', 'no'))
-
-# Identify plots with and without greening
-plots_y <- unique(val_ts_pred$plotID[val_ts_pred$regreened=='yes'])
-plots_n <- unique(val_ts_pred$plotID[val_ts_pred$regreened=='no'])
-
-# Split into training and testing data
-set.seed(1)
-train_y <- sample(plots_y, 0.5 * length(plots_y))
-train_n <- sample(plots_n, 0.5 * length(plots_n))
-
-val_ts_train <- val_ts_pred[val_ts_pred$plotID %in% c(train_y, train_n),]
-`%not_in%` <- Negate(`%in%`)
-val_ts_test <- val_ts_pred[val_ts_pred$plotID %not_in% c(train_y, train_n),]
-
-rf_fit <- ranger(as.factor(regreened) ~ ndvi_yr, data=val_ts_train, mtry=1, probability = T, importance = 'impurity')
-rf_pred <- predict(rf_fit, val_ts_test)
-
-val_ts_test <- bind_cols(val_ts_test, tibble(rf_pred$predictions[,'yes']) %>% rename(pred = `rf_pred1$predictions[, "yes"]`))
-
-confusionMatrix(as.factor(rf_pred$predictions), factor(val_ts_test$regreened), positive='yes', mode='everything')
-
-val_ts_test %>% 
-  right_join(val_pnts[,c('plotID', 'country')], by='plotID') %>% 
-  ggplot()+
-  geom_boxplot(aes(x=country, y=ndvi_yr, col=pred), alpha=0.1)
-  geom_smooth(aes(x=plotID, y=ndvi_int, group=rf_pred), method='lm')
-
-val_ts_test %>% 
-  right_join(val_pnts[,c('plotID', 'country')], by='plotID') %>% 
-  ggplot()+
-  geom_line(aes(x=year, y=ndvi_yr, group=plotID, col=pred), alpha=0.2)
-
-val_ts_test %>% 
-  right_join(val_pnts[,c('plotID', 'country')], by='plotID') %>% 
-  ggplot()+
-  geom_point(aes(x=plotID, y=pred, col=pred))
-
-
-# Try mixed effects model
-glm_fit <- train(factor(regreened) ~ mae, data = val_mae, method = "glm")
-glm_fit <- glm(regreened_dum ~ mae, data = val_mae)
-
-lme_fit <- lmer(as.factor(regreened) ~ 1 + (1 | plotID) + ndvi_int + prcp + prcp_lag1 + prcp_lag2,
-                data = val_ts_train)
 ```
