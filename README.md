@@ -1,8 +1,9 @@
-# Monitoring_land_restoration
+# Monitoring land restoration
 
-This repository contains all the scripts developed for the article: **A Remote Sensing Assessment of Farmer-Managed Land Restoration in Seven African Countries using Dense NDVI Time Series Forecasting**. The scripts are numbered (A1, A2, etc) based on the order in which they should be executed.
+This repository contains the scripts developed for the article: **A Remote Sensing Assessment of Farmer-Managed Land Restoration in Seven African Countries using Dense NDVI Time Series Forecasting**. The scripts are numbered (A1, A2, etc) based on the order in which they were executed.
 
-The restoration polygon data is not made available for privacy and property reasons. Still, parts of the analysis can be reproduced as some intermediate Landsat 8 time series have been made available here. The data in the folders `datasets/output/time_series` and `datasets/output/plot_data` can be used to run the greening time series analysis in scripts A6, A7 and parts of A10. 
+The restoration polygon data is not made available for privacy and property reasons. The greening time series analysis can be reproduced as the intermediate satellite (Landsat 8 and GPM) time series are available here (https://doi.org/10.5281/zenodo.8181836). These data in the folders `datasets/output/time_series` and `datasets/output/plot_data` can be used to reproduce the greening time series analysis conducted in scripts A6 and A7. The resulting datasets from A6 and A7 can be used to reproduce the figures in A10. 
+
 
 Overview of the scripts:
 - A1: Script to (geometrically) clean and combine the raw restoration plot data
@@ -15,4 +16,4 @@ Overview of the scripts:
 - A8a: Script that performs the entire greening time series analysis (A2, A3, A4, A5, A6, A7) for the validation points
 - A8b: Script to create annual median composites of Landsat 8 data for validation of the model
 - A9: Script to perform the greening analysis (A2, A3, A4, A5, A6, A7) for 100 sub-areas of large plots (>120 ha) to check the robustness of the method for large plots
-- A10: Script to make the figures 
+- A10: Script to make the figures
