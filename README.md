@@ -1,11 +1,13 @@
 # Monitoring land restoration
 
-This repository contains the scripts developed for the article: **A Remote Sensing Assessment of Farmer-Managed Land Restoration in Seven African Countries using Dense NDVI Time Series Forecasting**. The scripts are numbered (A1, A2, etc) based on the order in which they were executed.
+This repository contains the scripts developed for the article: **A Remote Sensing Assessment of Farmer-Managed Land Restoration in Seven African Countries using Dense NDVI Time Series Forecasting**.
 
-The restoration polygon data is not made available for privacy and property reasons. The greening time series analysis can be reproduced as the intermediate satellite (Landsat 8 and GPM) time series are available here (https://doi.org/10.5281/zenodo.8181836). These data in the folders `datasets/output/time_series` and `datasets/output/plot_data` can be used to reproduce the greening time series analysis conducted in scripts A6 and A7. The resulting datasets from A6 and A7 can be used to reproduce the figures in A10. 
+### How to use:
+The scripts are numbered (A1, A2, etc) based on the order in which they were executed. The greening time series analysis can be reproduced by executing scripts A6 and A7 in combination with the intermediate satellite (Landsat 8 and GPM) datasets (available here: https://doi.org/10.5281/zenodo.8181836). The data required are stored in the folders `datasets/output/time_series` and `datasets/output/plot_data`. The resulting datasets from A6 and A7 can be used to reproduce the figures in A10. 
 
+_Note:_ The restoration polygon data are not made available for privacy and property reasons. 
 
-Overview of the scripts:
+### Overview of the scripts:
 - A1: Script to (geometrically) clean and combine the raw restoration plot data
 - A2: Script to extract Landsat 8 and GPM precipitation time series for all restoration plots using GEE
 - A3: Script to 1) merge all the country-specific reflectance data extracted from GEE and 2) convert these raw DN values into surface reflectance
