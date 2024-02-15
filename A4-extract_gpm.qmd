@@ -73,12 +73,11 @@ for (country in countries){
 ```{r}
 gpm_ts$plot_ID <- gpm_ts$plotID
 for (i in 1:length(countries)){
-  gpm_ts$plotID[gpm_ts$country==countries[[i]]] <- paste0(substr(gpm_ts$country[gpm_ts$country==countries[[i]]][1], 1,1), 
-                                                          gpm_ts$plot_ID[gpm_ts$country==countries[[i]]])
+  gpm_ts$plotID[gpm_ts$country==countries[[i]]] <- paste0(substr(gpm_ts$country[gpm_ts$country==countries[[i]]][1], 1,1), gpm_ts$plot_ID[gpm_ts$country==countries[[i]]])
 }
 ```
 
-## Write aggregated reflectance dataset
+## Write aggregated precipitation dataset
 
 ```{r}
 fwrite(gpm_ts, paste0('output/time_series/gpm/Countries_gpm_monthly.csv'))
@@ -102,8 +101,7 @@ Merge precipitation and reflectance data
 
 ```{r}
 # Merge precipitation to reflectance ts
-l8_ts <- merge(refl_l8, gpm_ts[,c('plotID', 'yearmon','prcp_month','plot_ID','country')],
-               by=c('plotID', 'yearmon', 'plot_ID','country'), all.y=T)
+l8_ts <- merge(refl_l8, gpm_ts[,c('plotID', 'yearmon','prcp_month','plot_ID','country')],by=c('plotID', 'yearmon', 'plot_ID','country'), all.y=T)
 
 # Add county and region information to reflectance ts
 l8_ts <- merge(l8_ts, plots[,c('plotID', 'county','region')], by=c('plotID'), all.y=T)

@@ -92,8 +92,7 @@ refl_aggr_l8$plot_ID <- refl_aggr_l8$plotID
 
 # Add the country letter before the plotID
 for (i in 1:length(countries)){
-  refl_aggr_l8$plotID[refl_aggr_l8$country==countries[[i]]] <- paste0(substr(refl_aggr_l8$country[refl_aggr_l8$country==countries[[i]]][1], 1,1), 
-                                                                      refl_aggr_l8$plot_ID[refl_aggr_l8$country==countries[[i]]])
+  refl_aggr_l8$plotID[refl_aggr_l8$country==countries[[i]]] <- paste0(substr(refl_aggr_l8$country[refl_aggr_l8$country==countries[[i]]][1], 1,1), refl_aggr_l8$plot_ID[refl_aggr_l8$country==countries[[i]]])
 }
 ```
 

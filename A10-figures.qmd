@@ -27,6 +27,7 @@ library(plotly)
 library(httpgd)
 library(languageserver)
 library(sf)
+library(patchwork)
 ```
 
 Set language to english
@@ -39,6 +40,9 @@ Import some important datasets
 
 ```{r}
 l8_ts <- read_csv('output/time_series/Countries_l8_ts.csv')
+
+# Import plot MAEs
+plt_stat_fit <- read_csv('output/plot_data/all_countries/plt_stat_fit.csv')
 
 l8_fc_plt_dt <- read_csv('output/time_series/Countries_ts_fc_plt2.csv')
 l8_fc_plt_dt <- l8_fc_plt_dt %>% 
@@ -55,6 +59,7 @@ admins <- st_read('output/plot_data/all_countries/Countries_admins.GeoJSON')
 
 # Validation data
 val_pnts <- st_read('data/validation_points.GeoJSON')
+val_mae <- read_csv('output/plot_data/all_countries/val_mae.csv')
 ```
 
 
@@ -77,7 +82,7 @@ plots_dt %>%
 Vegetation over time with forecast and prediction interval
 
 ```{r}
-plt <- 'K343'
+plt <- 'G19613'
 
 pdf(paste0('figures/prediction_',plt,'.pdf'), height = 4, width = 7)
 l8_fc_plt %>% 
@@ -95,8 +100,7 @@ l8_fc_plt %>%
   geom_point(data = l8_ts[l8_ts$plotID==plt,], aes(x = date, y = ndvi), alpha=0.2,size=2)+
   geom_ribbon(aes(x=as.Date(yearmonth), ymin=lower_80, ymax=upper_80), alpha=0.2, fill='orange')+
   geom_ribbon(aes(x=as.Date(yearmonth), ymin=lower_50, ymax=upper_50), alpha=0.3, fill='orange')+
-  geom_line(data = l8_fc_plt_dt[l8_fc_plt_dt$plotID==plt,], aes(x=as.Date(yearmonth), y=ndvi_pred),
-            col='brown',lwd=0.9,lty=2)+
+  geom_line(data = l8_fc_plt_dt[l8_fc_plt_dt$plotID==plt,], aes(x=as.Date(yearmonth), y=ndvi_pred),col='brown',lwd=0.9,lty=2)+
   geom_line(data = l8_fc_plt_dt[l8_fc_plt_dt$plotID==plt,], aes(x = as.Date(yearmonth), y = ndvi_int),lwd=1,
             col='black')+
   annotate('text', x=as.Date('2021-02-01'),y=0.9, 
@@ -159,6 +163,10 @@ county_1000 <- plt_stat_fit %>%
   select(county) %>% 
   unique()
 
+# Select only adm1 geometries with >1000 ha restoration sites
+admins[which(admins$ADM2 %in% county_1000$county),] %>% 
+st_write('output/plot_data/all_countries/Adm2_1000ha.GeoJSON')
+
 county_yearly <- l8_fc_plt_dt %>% 
   tibble() %>% 
   filter(county %in% county_1000$county) %>% 
@@ -192,18 +200,23 @@ dev.off()
 ```
 
 
-MAE per coutny - boxplots
+MAE per county - boxplots
 
 ```{r}
 pdf('figures/mae_boxplot.pdf', height= 6, width=10)
 plt_stat_fit %>% 
   #filter(Hectare < 10) %>% 
   group_by(county) %>% 
-  mutate(county_area = sum(Hectare)) %>% 
+  mutate(county_area = sum(Hectare),
+        county_ai = mean(ndvi_mean, na.rm=TRUE),
+        Ecosystem = if_else(county_ai < 0.2, 'Arid', NA),
+        Ecosystem = if_else(county_ai >= 0.2 & county_ai < 0.5, 'Semi-Arid', Ecosystem),
+        Ecosystem = if_else(county_ai >= 0.5 & county_ai < 0.65, 'Dry sub-humid', Ecosystem),
+        Ecosystem = if_else(county_ai >= 0.65, 'Humid', Ecosystem)) %>%
   ungroup() %>% 
   filter(county_area > 1000) %>% 
   ggplot()+
-  geom_boxplot(aes(x=county, y=mae, fill=country), alpha=0.05, show.legend = F)+
+  geom_boxplot(aes(x=county, y=mae, fill=factor(Ecosystem, levels = c("Arid","Semi-Arid","Dry sub-humid","Humid"))), alpha=0.15, show.legend = TRUE)+
   facet_grid(~country, scales='free_x',space='free_x') + 
   theme(axis.title.x = element_blank(),
         panel.spacing = unit(0, "lines"),
@@ -211,7 +224,8 @@ plt_stat_fit %>%
         panel.grid.major = element_line(color='grey',linewidth = 0.1),
         axis.text.x=element_text(angle=90),
         axis.text = element_text(size=12),
-        axis.title = element_text(size=14))+
+        axis.title = element_text(size=14),
+        legend.title = element_blank())+
   labs(y=expression('MAE'[p]))+
   ylim(0,2)
 dev.off()
@@ -244,40 +258,106 @@ dev.off()
 Validation -- boxplot
 
 ```{r}
-pdf('figures/boxplot_validation.pdf',height=4,width=5.5)
-ggplot(val_mae) +
-  geom_point(aes(x=country, y=mae_0, col=regreened), alpha=0.25, position='jitter')+
-  geom_boxplot(aes(x=country, y=mae_0, col=regreened), outlier.alpha = 0)+
+val_mae <- val_mae %>% 
+  mutate(Ecosystem = factor(Ecosystem, levels = c("Arid","Semi-Arid","Dry sub-humid")))
+
+box_cadi <- ggplot(val_mae) +
+  geom_boxplot(aes(x=Ecosystem, y=mae_0, col=regreened), outlier.alpha = 0)+
+  geom_point(aes(x=Ecosystem, y=mae_0, col=regreened), alpha=0.25, position='jitter')+
   scale_colour_brewer(palette="Accent", direction=-1, labels=c('No','Yes'))+
   ylim(0,10)+
   theme(axis.title.x = element_blank(),
         panel.spacing = unit(0, "lines"),
         panel.background = element_rect(fill='white', colour='white'),
-        panel.grid.major = element_line(color='grey',linewidth = 0.1))+
+        panel.grid.major = element_line(color='grey',linewidth = 0.1),
+        plot.subtitle = element_text(face  = "bold"))+
   labs(y=expression('MAE'[p]), color='Greened', country=c('E','N','R'))
+
+box_restrend <- ggplot(restrend_df) +
+  geom_boxplot(aes(x=Ecosystem, y=slope, col=regreened), outlier.alpha = 0)+
+  geom_point(aes(x=Ecosystem, y=slope, col=regreened), alpha=0.25, position='jitter')+
+  scale_colour_brewer(palette="Accent", direction=-1, labels=c('No','Yes'))+
+  ylim(-0.03,0.06)+
+  theme(axis.title.x = element_blank(),
+        panel.spacing = unit(0, "lines"),
+        panel.background = element_rect(fill='white', colour='white'),
+        panel.grid.major = element_line(color='grey',linewidth = 0.1),
+        plot.subtitle = element_text(face  = "bold"))+
+  labs(y=expression('Slope coefficient'), color='Greened', country=c('E','N','R'))
+
+pdf('figures/validation_restrend_pvalue.pdf', height = 6, width = 10)
+ggplot(restrend_df) +
+  geom_boxplot(aes(x=Ecosystem, y=p.value, col=regreened), outlier.alpha = 0)+
+  geom_point(aes(x=Ecosystem, y=p.value, col=regreened), alpha=0.25, position='jitter')+
+  scale_colour_brewer(palette="Accent", direction=-1, labels=c('No','Yes'))+
+  ylim(0,1)+
+  theme(axis.title.x = element_blank(),
+        panel.spacing = unit(0, "lines"),
+        panel.background = element_rect(fill='white', colour='white'),
+        panel.grid.major = element_line(color='grey',linewidth = 0.1),
+        plot.subtitle = element_text(face  = "bold"))+
+  labs(y=expression('P-value'), color='Greened', country=c('E','N','R'))
 dev.off()
 ```
 
 MAE goodness of fit
 
 ```{r}
-roc <- roc(val_mae$regreened ~ val_mae$rmse_test, plot=T, print.auc=T)
-label_seq <- c(seq(1,length(roc$thresholds), 60), length(roc$thresholds))
-
-pdf('figures/roc_validation_rmse.pdf',height=5,width=5)
-ggplot()+
-  geom_line(aes(x=roc$specificities, y=roc$sensitivities))+
+roc_cadi <- roc(val_mae$regreened ~ val_mae$mae_0, plot=TRUE, print.auc=TRUE)
+label_seq_cadi <- c(seq(1,length(roc_cadi$thresholds), 60), length(roc_cadi$thresholds))
+plot_roc_cadi <- ggplot()+
+  geom_line(aes(x=roc_cadi$specificities, y=roc_cadi$sensitivities))+
   scale_x_reverse()+
   coord_equal()+
-  annotate('text', x=0.25,y=0.25, label=paste('AUC =', round(roc$auc,2)), size=3) +
-  geom_text(aes(label=round(roc$threshold[label_seq],2),
-                x=roc$specificities[label_seq],
-                y=roc$sensitivities[label_seq]),
+  annotate('text', x=0.25,y=0.25, label=paste('AUC =', round(roc_cadi$auc,2)), size=3) +
+  geom_text(aes(label=round(roc_cadi$threshold[label_seq_cadi],3),
+                x=roc_cadi$specificities[label_seq_cadi],
+                y=roc_cadi$sensitivities[label_seq_cadi]),
             size=2, nudge_x = 0.035, nudge_y = -0.01)+
   theme(panel.spacing = unit(0, "lines"),
         panel.background = element_rect(fill='white', colour='grey'),
         panel.grid.major = element_line(color='grey',linewidth = 0.1))+
   labs(y='Recall', x='Precision')
+
+
+roc_restrend <- roc(restrend_df$regreened ~ restrend_df$slope, plot=TRUE, print.auc=TRUE)
+label_seq_restrend <- c(seq(1,length(roc_restrend$thresholds), 60), length(roc_restrend$thresholds))
+plot_roc_restrend <- ggplot()+
+  geom_line(aes(x=roc_restrend$specificities, y=roc_restrend$sensitivities))+
+  scale_x_reverse()+
+  coord_equal()+
+  annotate('text', x=0.25,y=0.25, label=paste('AUC =', round(roc_restrend$auc,2)), size=3) +
+  geom_text(aes(label=round(roc_restrend$threshold[label_seq_restrend],3),
+                x=roc_restrend$specificities[label_seq_restrend],
+                y=roc_restrend$sensitivities[label_seq_restrend]),
+            size=2, nudge_x = 0.035, nudge_y = -0.01)+
+  theme(panel.spacing = unit(0, "lines"),
+        panel.background = element_rect(fill='white', colour='grey'),
+        panel.grid.major = element_line(color='grey',linewidth = 0.1))+
+  labs(y='Recall', x='Precision')
+```
+
+Path the model performance plots together
+```{r}
+pdf('figures/model_performance1.pdf', height = 7.5, width = 11)
+(box_cadi + ggtitle("CADI") + theme(plot.title = element_text(face = "bold",size=12)) | plot_roc_cadi) / 
+(box_restrend + ggtitle("RESTREND") + theme(plot.title = element_text(face = "bold",size=12)) | plot_roc_restrend)
+dev.off()
+```
+
+Model quality - non-greening pixels
+```{r}
+pdf("figures/model_rmse.pdf", width = 6, height=3)
+ggplot(val_mae[val_mae$regreened=='no',], aes(x=rmse_test, y=Ecosystem, color = Ecosystem)) +
+  geom_boxplot() +
+  scale_color_viridis_d(direction = -1)+
+  theme(panel.spacing = unit(0, "lines"),
+        panel.background = element_rect(fill='white', colour='grey'),
+        panel.grid.major = element_line(color='grey',linewidth = 0.1),
+        legend.position = 'none',
+        axis.text = element_text(size = 10))+
+        labs(y=NULL, x='RMSE')+
+        xlim(0,0.15)
 dev.off()
 ```
 
@@ -347,7 +427,7 @@ dev.off()
 Cumlative regreening effect per country
 
 ```{r}
-pdf('figures/cumulative_regreening.pdf', width = 9.5, height = 5)
+pdf('figures/cumulative_greening.pdf', width = 10, height = 5)
 l8_fc_plt_dt %>% 
   filter(yearmon > as.Date('2017-01-01')) %>%
   arrange(country) %>% 
@@ -358,21 +438,21 @@ l8_fc_plt_dt %>%
   mutate(SAEp = cumsum(res_sum),
         MAEp_total = sum(res_sum)) %>% 
   ggplot()+
-  geom_line(aes(x = yearmon, y = SAEp/MAEp_total*100, col = country),lwd=0.8)+
-  geom_ribbon(aes(x = yearmon, ymin = (SAEp/MAEp_total)*100, ymax = (SAEp/MAEp_total*100)+((prcp/30)), fill = country), alpha=0.25)+
-  scale_y_continuous(name="Cumlative regreening (%)", limits=c(0, 100),
-  breaks = scales::pretty_breaks(n = 4))+
-  scale_fill_viridis(discrete=T, option='B')+
-  scale_color_viridis(discrete=T, option='B')+
-    theme(panel.spacing = unit(0, "lines"),
-        panel.background = element_rect(fill='white', colour='grey'),
-        panel.grid.major = element_line(color='grey',linewidth = 0.05),
-        axis.title.x = element_blank(),
-        panel.grid.minor = element_line(color='grey', linewidth = 0.05),
-        axis.text = element_text(size=12),
-        axis.title = element_text(size=12),
-        axis.text.y = element_text(colour = c("black", "black", "black", "black", "black", "transparent")))+
-  labs(y='Cumulative regreening (%)', fill='Precipitation', col='Country', lty='Restoration practice')+
-  ylim(0,120)
+    geom_line(aes(x = yearmon, y = SAEp/MAEp_total*100, col = country),lwd=0.8)+
+    geom_ribbon(aes(x = yearmon, ymin = (SAEp/MAEp_total)*100, ymax = (SAEp/MAEp_total*100)+((prcp/30)), fill = country), alpha=0.25)+
+    scale_y_continuous(name="Cumlative greening (%)", limits=c(0, 100),
+    breaks = scales::pretty_breaks(n = 4))+
+    scale_fill_viridis(discrete=T, option='B', direction = 1)+
+    scale_color_viridis(discrete=T, option='B', direction = 1)+
+      theme(panel.spacing = unit(0, "lines"),
+          panel.background = element_rect(fill='white', colour='grey'),
+          panel.grid.major = element_line(color='grey',linewidth = 0.05),
+          axis.title.x = element_blank(),
+          panel.grid.minor = element_line(color='grey', linewidth = 0.05),
+          axis.text = element_text(size=12),
+          axis.title = element_text(size=12),
+          axis.text.y = element_text(colour = c("black", "black", "black", "black", "black", "transparent")))+
+    labs(y=expression('Cumulative MAE'[p]-'(%)'), fill='Precipitation', col=expression('Cumulative MAE'[p]), lty='Restoration practice')+
+    ylim(0,120)
 dev.off()
 ```

@@ -113,3 +113,211 @@ save(l8_armax_plt, file = 'output/models/Countries_l8_armax_plt2.RDS')
 load('output/models/Countries_l8_fc_plt2.RDS')
 load('output/models/Countries_l8_armax_plt2.RDS')
 ```
+
+
+
+
+Test with RESTREND
+```{r}
+#install.packages("TSS.RESTREND", dependencies = TRUE, INSTALL_opts = '--no-lock')
+#install.packages("bfast")
+library(TSS.RESTREND)
+
+# Read plot ts data
+l8_ts_plt <- read_csv('output/time_series/Countries_l8_plt.csv')
+gpm_ts <- fread('output/time_series/gpm/Countries_gpm_monthly.csv')
+
+# Convert back to tsibble after reading 'l8_ts_plt'
+l8_ts_plt <- l8_ts_plt %>% 
+  mutate(yearmonth=yearmonth(as.character(yearmon))) %>% 
+  as_tsibble(index=yearmonth, key=plotID)
+
+l8_ts_exp <-  l8_ts_plt %>% 
+  filter(plotID == 'K9474',
+  yearmon >= as.Date('2014-01-01') & yearmon <= as.Date('2021-12-31'))
+
+
+ts_vi_obj <- ts(l8_ts_exp[c("ndvi_int")], start = c(year(min(l8_ts_exp$yearmon)),month(min(l8_ts_exp$yearmon))), end=c(year(max(l8_ts_exp$yearmon)),month(max(l8_ts_exp$yearmon))), frequency=12)
+
+ts_prcp_obj <- ts(c(l8_ts_exp$prcp_lag2[1:12], l8_ts_exp$prcp), 
+start = c(year(min(l8_ts_exp$yearmon)) - 1, month(min(l8_ts_exp$yearmon))), end=c(year(max(l8_ts_exp$yearmon)),month(max(l8_ts_exp$yearmon))), frequency=12)
+
+CTSR.VI <- ts_vi_obj
+clim.data <- ts_prcp_obj
+
+acp_table <- climate.accumulator(CTSR.VI = ts_vi_obj, clim.data = ts_prcp_obj, 
+max.acp = 4, max.osp = 2)
+
+ACT.table = NULL
+CTSR.TM = NULL
+acu.TM = NULL
+VI.index = FALSE
+rf.b4 = FALSE
+rf.af = FALSE
+sig = 0.05
+season = "none"
+exclude = 0
+allow.negative = FALSE
+allowneg.retest = FALSE
+h = 0.15
+retnonsig=FALSE
+
+
+#results <- TSSRESTREND(CTSR.VI = ts_vi_obj, ACP.table = ACP.table)
+print(results)
+plot(results, verbose=TRUE)
+
+
+max.df <- AnMaxVI(CTSR.VI)
+# Pull the key components from the result
+anu.VI <- max.df$Max #the VI values
+VI.index <- max.df$index #the indes values
+Max.Month <- max.df$Max.Month #month if the year the even occured
+
+if ((!allow.negative && as.numeric(CTS.Str$summary)[1] < 0) || as.numeric(CTS.Str$summary)[4] > sig) {
+  BFraw = TRUE
+} else {BFraw = FALSE}
+
+# ===== Check the times of the datasets =====
+if (class(CTSR.RF) != "ts") {
+  stop("CTSR.RF Not a time series object")
+}
+# get the time data out
+start.ti <- time(CTSR.VI)
+freq <- frequency(CTSR.VI)
+# check the two ts object cover the same time period
+start.ti2 <- time(CTSR.RF)
+freq2 <- frequency(CTSR.RF)
+#Check the start dates and the frequency are correct
+if (!identical(start.ti, start.ti2)) {
+  stop("ts objects do not have the same time, (CTSR.VI & CTSR.RF)")}
+if (!identical(freq, freq2)) {
+  stop("ts objects do not have the same frequency, (CTSR.VI & CTSR.RF)")}
+
+st.ti <- time(anu.VI)
+st.f <- frequency(anu.VI)
+st.ti2 <- time(acu.RF)
+st.f2 <- frequency(acu.RF)
+
+# ===== Check passed breakpoint rainfall data =====
+# if breakpoints are used defined rather than determined, test all the data will work
+    
+# ==============================================================================================
+# ===== Perform BFAST to look for potential breakpoints using VPR.BFAST =====
+# Pass the infomation about the VI and RF as well as the BFAST method to the VPR.BFAST script
+bkp = VPR.BFAST(CTSR.VI, CTSR.RF, CTSR.TM=CTSR.TM, season = season, BFAST.raw = BFraw, h = h)
+# Extract the key values from the BFAST result
+bp <- bkp$bkps
+BFAST.obj <- bkp$BFAST.obj #For the models Bin
+CTS.lm <- bkp$CTS.lm #For the Models Bin
+bp <- bp[!bp %in% exclude] #remove breakpoints in the exclude list (Sensor transitions)
+BFT <-  bkp$BFAST.type #Type of BFAST used
+
+# +++++ put all the infomation on the offset periods and accumulation period into a dataframe +++++
+acum.df <- data.frame(
+  CTSR.osp = CTSR.osp, CTSR.acp = CTSR.acp, CTSR.tosp = CTSR.tosp, CTSR.tacp = CTSR.tacp,
+  osp = osp, acp = acp, tosp = tosp, tacp = tacp,  osp.b4 = NaN, acp.b4 = NaN, tosp.b4 = NaN,
+  tacp.b4 = NaN, osp.af = NaN, acp.af = NaN, tosp.af = NaN, tacp.af = NaN
+  )
+# ===== Check and see if there are breakpoint that need to be tested =====
+if (class(bp) == "logical" | length(bp) == 0) {#Should catch both the false and the no breakpoints
+  # no breakpoints detected by the BFAST
+  bp <- FALSE
+  test.Method = "RESTREND" # MEthod set to determine further testing
+  # Chow summary populated with false
+  chow.sum <- data.frame(abs.index = FALSE, yr.index = FALSE, reg.sig = FALSE, VPR.bpsig = FALSE)
+    chow.bpi <- FALSE
+}else{# Breakpoints detected by the BFAST
+  # ===== Perform the chow test on the breakpoints using CHOW function =====
+  bp <- as.numeric(bkp$bkps)
+  res.chow <- CHOW(anu.VI, acu.RF, VI.index, bp, acu.TM = acu.TM, sig = sig)
+  # Pull out the key values from the CHOW
+  brkp <- as.integer(res.chow$bp.summary["yr.index"]) #this isn't right
+  chow.sum <- res.chow$bp.summary
+  chow.bpi <- res.chow$allbp.index
+  # Use the CHOW results to set the testmethod
+  test.Method = res.chow$n.Method
+}
+# ==============================================================================================
+# ========== Perform a total change calculation ==========
+# Note:
+#   The method is calculated by the CHOW function
+
+if (test.Method == "RESTREND") {
+  # ===== No breakpoints, Results calculated using the RESTREND function =====
+  result <- RESTREND(anu.VI, acu.RF, VI.index, acu.TM=acu.TM, sig = sig, retnonsig=retnonsig)
+
+}else if (test.Method == "seg.RESTREND") {
+  # ===== breakpoints in the VPR/VCR residuals, Results calculated using the seg.RESTREND function =====
+  breakpoint = as.integer(res.chow$bp.summary[2])
+  result <- seg.RESTREND(anu.VI, acu.RF, VI.index, brkp, acu.TM=acu.TM, sig=sig, retnonsig=retnonsig)
+
+}else if (test.Method == "seg.VPR") {
+  # ===== breakpoints in the VPR/VCR, Results calculated using the seg.VPR function =====
+  if ((!rf.b4) || (!rf.af)) {
+    # +++++ Calculate the regression coefficents on either side of the breakpoint using AnnualClim.Cal +++++
+    VPRbp.df <- AnnualClim.Cal(anu.VI, VI.index, ACP.table, ACT.table=ACT.table, Breakpoint = brkp, allow.negative = allow.negative)
+    rf.b4 <- VPRbp.df$rf.b4
+    rf.af <- VPRbp.df$rf.af
+    tm.b4 <- VPRbp.df$tm.b4
+    tm.af <- VPRbp.df$tm.af
+    # Check if temp is insignificant either side of the breakpoint in the VPR,
+      # if yes, remove temp from segmented VPR
+    if (is.null(tm.b4) && is.null(tm.af)) {acu.TM = NULL}
+    #Add the segmented offset periods and accumulation periods to the existing dataframe
+    acum.df$osp.b4 <- VPRbp.df$osp.b4
+    acum.df$acp.b4 <- VPRbp.df$acp.b4
+    acum.df$tosp.b4 <- VPRbp.df$tosp.b4
+    acum.df$tacp.b4 <- VPRbp.df$tacp.b4
+    acum.df$osp.af <- VPRbp.df$osp.af
+    acum.df$acp.af <- VPRbp.df$acp.af
+    acum.df$tosp.af <- VPRbp.df$tosp.af
+    acum.df$tacp.af <- VPRbp.df$tacp.af
+  }
+  # +++++ Perform segmented VPR/VCR calculation  +++++
+  breakpoint = as.integer(res.chow$bp.summary[2])
+  # print(brkp)
+  result <- seg.VPR(anu.VI, acu.RF, VI.index, brkp, rf.b4, rf.af, acu.TM, tm.b4, tm.af, sig=sig, retnonsig=retnonsig)
+}
+# ========== New (in version 0.3.0) Sanity check on Total change values ==========
+# +++ Checks to see if value for total change fall within a sane range +++
+if (abs(result$summary$Total.Change > (max(CTSR.VI)-min(CTSR.VI)))){
+  print("Non Valid estimate produced, returning zero")
+  result$summary$Total.Change = 0
+  result$summary$Method = "InvalidValueError"
+}
+  # else if (result$summary$Total.Change == 0){
+  #   browser("Failure here somewhere, Take a look and see what the options are")
+  #   # result2 <- RESTREND(anu.VI, acu.RF, VI.index, acu.TM=acu.TM, sig = sig, retnonsig=retnonsig)
+  # } else if (is.na(result$summary$Total.Change)){
+  #   browser("Failure here somewhere, Take a look and see what the options are")
+  # }
+
+  # ==============================================================================================
+  # ===== Build the results into a list to be returned to user =====
+  # +++++ add the common variable to the results list ++++++
+  # the fitted models
+result$TSSRmodels$CTS.fit <- CTS.lm
+result$TSSRmodels$BFAST <- BFAST.obj
+# Complete Time series values
+result$ts.data$CTSR.VI <- CTSR.VI
+result$ts.data$CTSR.RF <- CTSR.RF
+if (!is.null(ACT.table)) {# Add Temperature if present
+  result$ts.data$CTSR.TMraw <- ts(ACT.table[1, ], start = c(start(CTSR.VI)[1], start(CTSR.VI)[2]), frequency = 12)
+  result$ts.data$CTSR.TM <- CTSR.TM
+  }else{
+    result$ts.data$CTSR.TM <- CTSR.TM
+    result$ts.data$CTSR.TMraw <- CTSR.TM
+  }
+
+# add to the ols summary table
+result$ols.summary$chow.sum <- chow.sum
+result$ols.summary$chow.ind <- chow.bpi
+result$ols.summary$OLS.table["CTS.fit",] <- details.CTS.VPR
+# Add the accumulation and offset periods
+result$acum.df <- acum.df
+#add the bfast method to the results summary
+result$summary$BFAST.Method <- BFT
+
+results <- result
+```

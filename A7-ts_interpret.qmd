@@ -110,18 +110,26 @@ plt_stat_fit <- l8_fc_plt_dt %>%
             rmse_train = sum(sqrt(.resid^2), na.rm=T) / n_training) %>% 
   left_join(plots[,c('plotID', 'country', 'county','region', 'Hectare', 'type')], by='plotID')
 
+# Add AI and mae to plots and save
+plots <- st_read('output/plot_data/all_countries/Countries_plots_final.GeoJSON')
+ai <- rast('../../data/rasters/Aridity_index_regreening.tif')
+plots <- plots %>% 
+  right_join(plt_stat_fit[,c('plotID', 'mae','ndvi_mean')], by = 'plotID') # Merge
+# Add ecosystem information to the plots
+ai_plots <- terra::extract(ai, vect(plots), ID = FALSE, fun = mean, bind = TRUE) %>% st_as_sf() %>% rename(aridity_index = b1)  %>% mutate(aridity_index = aridity_index*0.0001)
+
+# Add ecosystem information to the plt_stat_fit
+plt_stat_fit <- plt_stat_fit %>% 
+  right_join(st_drop_geometry(ai_plots)[,c('plotID', 'aridity_index')], by = 'plotID')
+
+# Write plt_stat_fit csv
 write_csv(plt_stat_fit, 'output/plot_data/all_countries/plt_stat_fit.csv')
 plt_stat_fit <- read_csv('output/plot_data/all_countries/plt_stat_fit.csv')
 
-# Add mae to plots and save
-plots <- read_csv('output/plot_data/all_countries/Countries_plots_final.csv')
-plots <- plots %>% 
-  right_join(plt_stat_fit[,c('plotID', 'mae')], by = 'plotID') # Merge
-
-# Write results
-st_write(obj=plots, dsn='output/plot_data/all_countries/Countries_plots_green2.GeoJSON', driver='GeoJSON')
+# Write plots GeoJSON results
+st_write(obj=ai_plots, dsn='output/plot_data/all_countries/Countries_plots_green.GeoJSON', driver='GeoJSON')
 # or
-write_csv(obj=plots, dsn='output/plot_data/all_countries/Countries_plots_green2.csv')
+write_csv(st_drop_geometry(plots), 'output/plot_data/all_countries/Countries_plots_green.csv')
 ```
 
 

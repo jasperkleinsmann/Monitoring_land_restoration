@@ -17,7 +17,7 @@ for (cntr in countries){
   country_plots_path <- append(country_plots_path, path)
 }
 plots_list <- lapply(country_plots_path, st_read) # import
-plots <- rbindlist(plots_list, use.names = T)
+plots <- rbindlist(plots_list, use.names = TRUE, fill = TRUE)
 plots <- st_sf(plots)
 ```
 
@@ -30,6 +30,7 @@ names(plots)[names(plots) == 'county_region'] <- 'region'
 names(plots)[names(plots) == 'country'] <- 'Country'
 ```
 
+
 # Import centroids
 ```{r}
 country_plots_pnt_path <- list()
@@ -38,7 +39,7 @@ for (cntr in countries){
   country_plots_pnt_path <- append(country_plots_pnt_path, path)
 }
 centroid_list <- lapply(country_plots_pnt_path, st_read) # import
-plot_centroids <- rbindlist(centroid_list, use.names = T)
+plot_centroids <- rbindlist(centroid_list, use.names = TRUE, fill = TRUE)
 plot_centroids <- st_sf(plot_centroids)
 ```
 
@@ -90,7 +91,7 @@ st_write(admin, dsn=paste0('output/plot_data/all_countries/Countries_admins.GeoJ
 # Assign county (ADM2), region (ADM1) and country (ADM0) to each plot based on intersection with 'admins' data
 ```{r}
 sf::sf_use_s2(FALSE) 
-county_index <- st_within(plot_centroids, admins, sparse=T)
+county_index <- st_within(plot_centroids, admins, sparse=TRUE)
 null_counties <- which(sapply(county_index,length)==0)
 county_index[null_counties] <- NA
 county_index <- unlist(county_index)
@@ -104,13 +105,36 @@ plots <- plots[,-c('Country')] # remove Country and keep country
 ```
 
 
+Merge plots mgt information with plots_final (this is a fix, not origional code)
+```{r}
+# ID consists of first letter of the country the plot is in and then a randomly assined ID number (done in A1)
+plots$plot_ID <- plots$plotID
+for (i in 1:length(countries)){
+  plots$plotID[plots$country==countries[[i]]] <- paste0(substr(plots$country[plots$country==countries[[i]]][1], 1,1),plots$plot_ID[plots$country==countries[[i]]])
+}
+plots <- data.frame(st_drop_geometry(plots))
+
+plots_final <- st_read(dsn=paste0('output/plot_data/all_countries/Countries_plots_final1.GeoJSON'))
+
+# specify columns to change to plots_final df
+fmnr_columns <- c('mgt_prunning','mgt_fencing','mgt_weeding','mgt_watering','mgt_organic_fertilizer','mgt_thinning','mgt_pollarding_lopping','mgt_coppicing','mgt_others')
+
+plots_final <- merge(plots_final[,-which(names(plots_final) %in% fmnr_columns)], plots[, which(names(plots) %in% c(fmnr_columns, "plotID"))], by = 'plotID', all.x = TRUE)
+
+# Remove duplicated (due to conversion to POLYGON) from data. Select largest polygon
+plots_final <- plots_final[order(plots_final$Hectare),]
+plots_final <- plots_final[-c(which(duplicated(plots_final$plotID, fromLast=FALSE))),]
+
+st_write(plots_final, 'output/plot_data/all_countries/Countries_plots_final.GeoJSON')
+write_csv(st_drop_geometry(plots_final), 'output/plot_data/all_countries/Countries_plots_final.csv')
+```
+
 # Create new column that is truly unique 
 ```{r}
 # ID consists of first letter of the country the plot is in and then a randomly assined ID number (done in A1)
 plots$plot_ID <- plots$plotID
 for (i in 1:length(countries)){
-  plots$plotID[plots$country==countries[[i]]] <- paste0(substr(plots$country[plots$country==countries[[i]]][1], 1,1), 
-                                                        plots$plot_ID[plots$country==countries[[i]]])
+  plots$plotID[plots$country==countries[[i]]] <- paste0(substr(plots$country[plots$country==countries[[i]]][1], 1,1),plots$plot_ID[plots$country==countries[[i]]])
 }
 
 # Write final plots df
@@ -135,8 +159,7 @@ for (i in 2:length(countries)){
 # Create new column that is truly plot unique
 l8_ts$plot_ID <- l8_ts$plotID
 for (i in 1:length(countries)){
-  l8_ts$plotID[l8_ts$country==countries[[i]]] <- paste0(substr(l8_ts$country[l8_ts$country==countries[[i]]][1], 1,1), 
-                                                        l8_ts$plot_ID[l8_ts$country==countries[[i]]])
+  l8_ts$plotID[l8_ts$country==countries[[i]]] <- paste0(substr(l8_ts$country[l8_ts$country==countries[[i]]][1], 1,1), l8_ts$plot_ID[l8_ts$country==countries[[i]]])
 }
 
 # Write final plots df
