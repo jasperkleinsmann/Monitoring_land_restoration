@@ -1,4 +1,4 @@
-# Land Resotration Anomaly Detection 
+# Land Restoration Anomaly Detection 
 
 This repository contains the scripts developed for the article: **Continuous Anomaly Detection after Farmer-Managed Land Restoration in Sub-Saharan Drylands**.
 
