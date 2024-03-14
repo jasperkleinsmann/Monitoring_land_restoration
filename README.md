@@ -1,6 +1,6 @@
 # Land Restoration Anomaly Detection 
 
-This repository contains the scripts developed for the article: **Continuous Anomaly Detection after Farmer-Managed Land Restoration in Sub-Saharan Drylands**. The analysis is available an online tool here: https://dashboards.cifor-icraf.org/app/restoration_app
+This repository contains the scripts developed for the article: **Continuous Anomaly Detection using Remote Sensing to Monitor on-Farm Restoration in sub-Saharan Africa**. The analysis is available an online tool here: https://dashboards.cifor-icraf.org/app/restoration_app
 
 ### How to use:
 The scripts are numbered (A1, A2, etc) based on the order in which they were executed. The greening time series analysis can be reproduced by executing scripts A6 and A7 in combination with the intermediate satellite (Landsat 8 and GPM) datasets (available here: https://doi.org/10.5281/zenodo.8181836). The data required are stored in the folders `datasets/output/time_series` and `datasets/output/plot_data`. The resulting datasets from A6 and A7 can be used to reproduce the figures in A10. 
